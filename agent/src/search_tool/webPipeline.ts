@@ -1,12 +1,3 @@
-// top 10 engineering collges in India 2025 ?
-
-// search the web ->
-// visit every result page ->
-// summarize
-// return the candidate, answer, sources, mode
-
-// types in ui -> search the web -> visit every result page -> summarize
-
 import { RunnableLambda, RunnableSequence } from "@langchain/core/runnables";
 import { webSearch } from "../utils/webSearch";
 import { openUrl } from "../utils/openUrl";
@@ -15,149 +6,75 @@ import { candidate } from "./types";
 import { getChatModel } from "../shared/models";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 
-const setTopResults = 5;
+const TOP_RESULTS_LIMIT = 5;
 
-export const webSearchStep = RunnableLambda.from(
-  async (input: { q: string; mode: "web" | "direct" }) => {
-    const results = await webSearch(input.q); // tavily
+// --- 1. FUNÇÕES DE SUPORTE (Lógica Pura) ---
 
-    return {
-      ...input,
-      results,
-    };
-  }
-);
+// Função para buscar e resumir o conteúdo de cada URL encontrada
+async function fetchAndSummarizeLinks(results: any[]) {
+  const topLinks = results.slice(0, TOP_RESULTS_LIMIT);
 
-export const openAndSummarizeStep = RunnableLambda.from(
-  async (input: { q: string; mode: "web" | "direct"; results: any[] }) => {
-    if (!Array.isArray(input.results) || input.results.length === 0) {
-      return {
-        ...input,
-        pageSummaries: [],
-        fallback: "no-results" as const,
-      };
+  const tasks = topLinks.map(async (res) => {
+    try {
+      const page = await openUrl(res.url);
+      const { summary } = await summarize(page.content);
+      return { url: page.url, summary };
+    } catch {
+      // Se falhar ao abrir a página, usamos o snippet do Google/Tavily como fallback
+      return { url: res.url, summary: res.snippet || res.title };
     }
+  });
 
-    const extractTopResults = input.results.slice(0, setTopResults);
+  const processed = await Promise.all(tasks);
+  return processed.filter((p) => p.summary); // Remove resultados vazios
+}
 
-    const settledResults = await Promise.allSettled(
-      extractTopResults.map(async (result: any) => {
-        const opened = await openUrl(result.url);
-        const summarizeContent = await summarize(opened.content);
+// --- 2. OS PASSOS DO RUNNABLE (Os "Canos") ---
 
-        return {
-          url: opened.url,
-          summary: summarizeContent.summary,
-        };
-      })
-    );
+// PASSO 1: Busca na Web
+const webSearchStep = RunnableLambda.from(async (input: { q: string }) => {
+  const results = await webSearch(input.q);
+  return { ...input, results };
+});
 
-    // status -> fulfilled
-    const settledResultsPageSummaries = settledResults
-      .filter((settledResult) => settledResult.status === "fulfilled")
-      .map((s) => s.value);
+// PASSO 2: Acesso aos links e Resumo
+const openAndSummarizeStep = RunnableLambda.from(async (input: any) => {
+  const pageSummaries = await fetchAndSummarizeLinks(input.results || []);
+  return { ...input, pageSummaries };
+});
 
-    //edge case: allsetted every case fails
-    if (settledResultsPageSummaries.length === 0) {
-      const fallbackSnippetSummaries = extractTopResults
-        .map((result: any) => ({
-          url: result.url,
-          summary: String(result.snippet || result.title || "").trim(),
-        }))
-        .filter((x: any) => x.summary.length > 0);
-
-      return {
-        ...input,
-        pageSummaries: fallbackSnippetSummaries,
-        fallback: "snippets" as const,
-      };
-    }
-
-    return {
-      ...input,
-      pageSummaries: settledResultsPageSummaries,
-      fallback: "none" as const,
-    };
-  }
-);
-
-// compose step
-//  {q,pageSummaries : [{url, summary}], mode, fallback }
-
-// candidate -> answer, sources, mode
-
-export const ComposeStep = RunnableLambda.from(
-  async (input: {
-    q: string;
-    pageSummaries: Array<{ url: string; summary: string }>;
-    mode: "web" | "direct";
-    fallback: "no-results" | "snippets" | "none";
-  }): Promise<candidate> => {
+// PASSO 3: Composição da Resposta Final pela IA
+const composeStep = RunnableLambda.from(
+  async (input: any): Promise<candidate> => {
     const model = getChatModel({ temperature: 0.2 });
+    const hasPages = input.pageSummaries?.length > 0;
 
-    if (!input.pageSummaries || input.pageSummaries.length === 0) {
-      const directResponseFromModel = await model.invoke([
-        new SystemMessage(
-          [
-            "You answer briefly and clearly for beginners",
-            "If unsure, say so",
-          ].join("\n")
-        ),
-        new HumanMessage(input.q),
-      ]);
+    // Prompt Dinâmico
+    const systemPrompt = hasPages
+      ? "Use the provided summaries to answer accurately. Max 8 sentences."
+      : "Answer briefly as a general assistant. If unsure, say so.";
 
-      const directAns = (
-        typeof directResponseFromModel.content === "string"
-          ? directResponseFromModel.content
-          : String(directResponseFromModel.content)
-      ).trim();
-
-      return {
-        answer: directAns,
-        sources: [],
-        mode: "direct",
-      };
-    }
+    const userContent = hasPages
+      ? `Question: ${input.q}\n\nContext:\n${JSON.stringify(input.pageSummaries)}`
+      : input.q;
 
     const res = await model.invoke([
-      new SystemMessage(
-        [
-          "You concisely answer questions using provided page summaries",
-          "Rules:",
-          "- Be accurate and netral",
-          "- 5-8 sentences max",
-          "- Use only the provided summaries; do not invent new facts",
-        ].join("\n")
-      ),
-      new HumanMessage(
-        [
-          `Question: ${input.q}`,
-          "Summaries:",
-          JSON.stringify(input.pageSummaries, null, 2),
-        ].join("\n")
-      ),
+      new SystemMessage(systemPrompt),
+      new HumanMessage(userContent),
     ]);
 
-    const finalAns =
-      typeof res.content === "string" ? res.content : String(res.content);
-
-    const extractSources = input.pageSummaries.map((x) => x.url);
-
     return {
-      answer: finalAns,
-      sources: extractSources,
-      mode: "web",
+      answer: String(res.content).trim(),
+      sources: hasPages ? input.pageSummaries.map((s: any) => s.url) : [],
+      mode: hasPages ? "web" : "direct",
     };
-  }
+  },
 );
 
-// LCEL
-//webSearchStep
-//openAndSummarizeStep
-//stepCompose
+// --- 3. A ESTEIRA FINAL (LCEL) ---
 
 export const webPath = RunnableSequence.from([
   webSearchStep,
   openAndSummarizeStep,
-  ComposeStep,
+  composeStep,
 ]);

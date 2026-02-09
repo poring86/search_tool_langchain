@@ -1,6 +1,10 @@
 # AI Search Tool (LangChain + Next.js)
 
+![Project Screenshot](image.png)
+
 Este projeto é um motor de busca inteligente que utiliza Inteligência Artificial para decidir entre fornecer uma resposta direta ou realizar uma busca na web com sumarização de resultados, utilizando as ferramentas mais modernas de IA e desenvolvimento web.
+
+---
 
 ## 🚀 Como Funciona
 
@@ -30,17 +34,29 @@ O sistema utiliza **LangChain Expression Language (LCEL)** no backend para orque
 
 ---
 
-## 📋 Pré-requisitos
+## ⚙️ Configuração e Execução
 
-Antes de começar, você precisará de:
--   [Node.js](https://nodejs.org/) instalado.
--   Chaves de API para os provedores desejados (Tavily, Gemini, OpenAI ou Groq).
+### 🐳 Rodando com Docker (Recomendado)
+
+A maneira mais rápida e fácil. **O Docker cuida de tudo para você** (instalação de dependências e execução dos serviços).
+
+1.  Certifique-se de que os arquivos `.env` na pasta `agent` e `client` estejam configurados corretamente.
+2.  Na raiz do projeto, execute:
+
+```bash
+docker compose up --build
+```
+
+> [!TIP]
+> Com este comando, você não precisa rodar `npm install` nem `npm run dev` manualmente. O ambiente já sobe pronto para uso.
+
+O frontend estará disponível em `http://localhost:3000` e o backend em `http://localhost:5174`.
 
 ---
 
-## ⚙️ Configuração e Execução
+### 💻 Rodando Localmente
 
-### 1. Backend (Agent)
+#### 1. Backend (Agent)
 
 Navegue até a pasta do backend e instale as dependências:
 
@@ -65,7 +81,7 @@ Inicie o servidor de desenvolvimento:
 npm run dev
 ```
 
-### 2. Frontend (Client)
+#### 2. Frontend (Client)
 
 Navegue até a pasta do frontend e instale as dependências:
 
@@ -79,8 +95,6 @@ Inicie o servidor do Next.js:
 ```bash
 npm run dev
 ```
-
-O projeto estará disponível em `http://localhost:3000`.
 
 ---
 

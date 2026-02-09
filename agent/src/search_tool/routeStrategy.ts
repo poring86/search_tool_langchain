@@ -1,66 +1,71 @@
 import { RunnableLambda } from "@langchain/core/runnables";
 import { SearchInputSchema } from "../utils/schemas";
 
-export function routeStrategy(q: string): "web" | "direct" {
-  const trimedQuery = q.toLowerCase().trim();
+/**
+ * CONFIGURAÇÕES (Abstração de Dados)
+ * Tiramos as Regex de dentro da função para reduzir a Complexidade Acidental.
+ * Se as palavras mudarem, você mexe aqui, não na lógica.
+ */
+const WEB_SEARCH_PATTERNS: RegExp[] = [
+  /\btop[-\s]*\d+\b/u,
+  /\bbest\b/u,
+  /\brank(?:ing|ings)?\b/u,
+  /\bwhich\s+is\s+better\b/u,
+  /\b(?:vs\.?|versus)\b/u,
+  /\bcompare|comparison\b/u,
+  /\bprice|prices|pricing|cost|costs|cheapest|cheaper|affordable\b/u,
+  /\bunder\s*\d+(?:\s*[kK])?\b/u,
+  /\p{Sc}\s*\d+/u,
+  /\blatest|today|now|current\b/u,
+  /\bnews|breaking|trending\b/u,
+  /\b(released?|launch|launched|announce|announced|update|updated)\b/u,
+  /\bchangelog|release\s*notes?\b/u,
+  /\bdeprecated|eol|end\s*of\s*life|sunset\b/u,
+  /\broadmap\b/u,
+  /\bworks\s+with|compatible\s+with|support(?:ed)?\s+on\b/u,
+  /\binstall(ation)?\b/u,
+  /\bnear\s+me|nearby\b/u,
+];
 
-  const isLongQuery = trimedQuery.length > 70;
+const MIN_QUERY_LENGTH_FOR_WEB = 70;
+const RECENT_YEAR_THRESHOLD = /\b20(2[4-9]|3[0-9])\b/;
 
-  const recentYearRegex = /\b20(2[4-9]|3[0-9])\b/.test(trimedQuery);
+/**
+ * REGRAS DE NEGÓCIO (Funções Puras e Coesas)
+ * Cada função faz apenas UMA coisa (Single Responsibility).
+ */
+const hasRecentYear = (query: string): boolean =>
+  RECENT_YEAR_THRESHOLD.test(query);
 
-  // this patterns can change based on the tool that u r creating
-  // ppt,
-  // e-commerce
-  const patterns: RegExp[] = [
-    /\btop[-\s]*\d+\b/u,
-    /\bbest\b/u,
-    /\brank(?:ing|ings)?\b/u,
-    /\bwhich\s+is\s+better\b/u,
-    /\b(?:vs\.?|versus)\b/u,
-    /\bcompare|comparison\b/u,
+const isLongQuery = (query: string): boolean =>
+  query.length > MIN_QUERY_LENGTH_FOR_WEB;
 
-    /\bprice|prices|pricing|cost|costs|cheapest|cheaper|affordable\b/u,
-    /\bunder\s*\d+(?:\s*[kK])?\b/u,
-    /\p{Sc}\s*\d+/u,
+const matchesWebPattern = (query: string): boolean =>
+  WEB_SEARCH_PATTERNS.some((pattern) => pattern.test(query));
 
-    /\blatest|today|now|current\b/u,
-    /\bnews|breaking|trending\b/u,
-    /\b(released?|launch|launched|announce|announced|update|updated)\b/u,
-    /\bchangelog|release\s*notes?\b/u,
+/**
+ * ESTRATÉGIA DE ROTEAMENTO
+ * Agora a complexidade ciclomática é fácil de ler.
+ * É quase uma frase em inglês.
+ */
+export function routeStrategy(query: string): "web" | "direct" {
+  const normalizedQuery = query.toLowerCase().trim();
 
-    /\bdeprecated|eol|end\s*of\s*life|sunset\b/u,
-    /\broadmap\b/u,
+  const shouldGoToWeb =
+    isLongQuery(normalizedQuery) ||
+    hasRecentYear(normalizedQuery) ||
+    matchesWebPattern(normalizedQuery);
 
-    /\bworks\s+with|compatible\s+with|support(?:ed)?\s+on\b/u,
-    /\binstall(ation)?\b/u,
-
-    /\bnear\s+me|nearby\b/u,
-  ];
-
-  const isQueryPresentInPatterns = patterns.some((pattern) =>
-    pattern.test(trimedQuery)
-  );
-
-  if (isLongQuery || recentYearRegex || isQueryPresentInPatterns) {
-    return "web";
-  } else {
-    return "direct";
-  }
+  return shouldGoToWeb ? "web" : "direct";
 }
 
-// routerstep
-// LCEL
-// q -> string, mode : web/direct
-// {q, mode}
-
+/**
+ * RUNNABLE STEP (Ponto de Entrada)
+ * Baixa instabilidade: depende de interfaces do LangChain.
+ */
 export const routerStep = RunnableLambda.from(async (input: { q: string }) => {
   const { q } = SearchInputSchema.parse(input);
-
-  // decide the mode -> web, direct
   const mode = routeStrategy(q);
 
-  return {
-    q,
-    mode,
-  };
+  return { q, mode };
 });
